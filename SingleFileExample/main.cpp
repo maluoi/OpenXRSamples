@@ -98,7 +98,7 @@ void openxr_make_actions  ();
 void openxr_shutdown      (release_swapchain_delegate_t release_swapchain);
 void openxr_poll_events   (bool &exit);
 void openxr_poll_actions  ();
-void openxr_poll_predicted();
+void openxr_poll_predicted(XrTime predicted_time);
 void openxr_render_frame  (render_delegate_t render_scene, predicted_delegate_t predicted_update);
 bool openxr_render_layer  (render_delegate_t render_scene, XrTime predictedTime, vector<XrCompositionLayerProjectionView> &projectionViews, XrCompositionLayerProjection &layer);
 
@@ -122,29 +122,29 @@ ID3DBlob            *d3d_compile_shader   (const char* hlsl, const char* entrypo
 constexpr char app_shader_code[] = R"_(
 cbuffer TransformBuffer : register(b0) {
 	float4x4 world;
-    float4x4 viewproj;
+	float4x4 viewproj;
 };
 struct vsIn {
-    float4 pos  : SV_POSITION;
-    float3 norm : NORMAL;
+	float4 pos  : SV_POSITION;
+	float3 norm : NORMAL;
 };
 struct psIn {
-    float4 pos   : SV_POSITION;
-    float3 color : COLOR0;
+	float4 pos   : SV_POSITION;
+	float3 color : COLOR0;
 };
 
 psIn vs(vsIn input) {
-    psIn output;
-    output.pos = mul(float4(input.pos.xyz, 1), world);
+	psIn output;
+	output.pos = mul(float4(input.pos.xyz, 1), world);
 	output.pos = mul(output.pos, viewproj);
 
 	float3 normal = normalize(mul(float4(input.norm, 0), world).xyz);
 
-    output.color = saturate(dot(normal, float3(0,1,0))).xxx;
-    return output;
+	output.color = saturate(dot(normal, float3(0,1,0))).xxx;
+	return output;
 }
 float4 ps(psIn input) : SV_TARGET {
-    return float4(input.color, 1);
+	return float4(input.color, 1);
 })_";
 
 float app_verts[] = {
@@ -605,7 +605,7 @@ swapchain_surfdata_t d3d_make_surface_data(XrBaseInStructure &swapchain_img) {
 void d3d_render_layer(XrCompositionLayerProjectionView &view, swapchain_surfdata_t &surface) {
 	// Set up where on the render target we want to draw, the view has a 
 	XrRect2Di     &rect     = view.subImage.imageRect;
-	D3D11_VIEWPORT viewport = CD3D11_VIEWPORT(rect.offset.x, rect.offset.y, rect.extent.width, rect.extent.height);
+	D3D11_VIEWPORT viewport = CD3D11_VIEWPORT((float)rect.offset.x, (float)rect.offset.y, (float)rect.extent.width, (float)rect.extent.height);
 	d3d_context->RSSetViewports(1, &viewport);
 
 	// Wipe our swapchain color and depth target clean, and then set them up for rendering!
@@ -664,7 +664,7 @@ ID3DBlob *d3d_compile_shader(const char* hlsl, const char* entrypoint, const cha
 
 	ID3DBlob *compiled, *errors;
 	if (FAILED(D3DCompile(hlsl, strlen(hlsl), nullptr, nullptr, nullptr, entrypoint, target, flags, 0, &compiled, &errors)))
-		printf("Error: D3DCompile failed %s", errors->GetBufferPointer());
+		printf("Error: D3DCompile failed %s", (char*)errors->GetBufferPointer());
 	if (errors) errors->Release();
 
 	return compiled;
@@ -691,8 +691,8 @@ void app_init() {
 	// matrices into the shaders, so make a buffer for them too!
 	D3D11_SUBRESOURCE_DATA vert_buff_data = { app_verts };
 	D3D11_SUBRESOURCE_DATA ind_buff_data  = { app_inds };
-	CD3D11_BUFFER_DESC     vert_buff_desc (sizeof(app_verts), D3D11_BIND_VERTEX_BUFFER);
-	CD3D11_BUFFER_DESC     ind_buff_desc  (sizeof(app_inds), D3D11_BIND_INDEX_BUFFER);
+	CD3D11_BUFFER_DESC     vert_buff_desc (sizeof(app_verts),              D3D11_BIND_VERTEX_BUFFER);
+	CD3D11_BUFFER_DESC     ind_buff_desc  (sizeof(app_inds),               D3D11_BIND_INDEX_BUFFER);
 	CD3D11_BUFFER_DESC     const_buff_desc(sizeof(app_transform_buffer_t), D3D11_BIND_CONSTANT_BUFFER);
 	d3d_device->CreateBuffer(&vert_buff_desc, &vert_buff_data, &app_vertex_buffer);
 	d3d_device->CreateBuffer(&ind_buff_desc,  &ind_buff_data,  &app_index_buffer);
