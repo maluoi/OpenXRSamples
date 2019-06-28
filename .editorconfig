@@ -1,0 +1,6 @@
+root = true
+
+# Set indentation information for Github
+[*.{h,cpp,c}]
+indent_style = tab
+indent_size = 4
