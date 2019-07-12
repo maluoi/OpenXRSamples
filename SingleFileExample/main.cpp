@@ -93,7 +93,7 @@ typedef void                (*release_swapchain_delegate_t)(swapchain_t &swapcha
 typedef void                (*render_delegate_t)           (XrCompositionLayerProjectionView &viewpoint, swapchain_surfdata_t &surface);
 typedef void                (*predicted_delegate_t)        ();
 
-void openxr_init          (const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format);
+bool openxr_init          (const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format);
 void openxr_make_actions  ();
 void openxr_shutdown      (release_swapchain_delegate_t release_swapchain);
 void openxr_poll_events   (bool &exit);
@@ -168,7 +168,11 @@ uint16_t app_inds[] = {
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 	XrBaseInStructure *binding = d3d_init();
-	openxr_init("Single file OpenXR", binding, d3d_make_surface_data, d3d_swapchain_fmt);
+	if (!openxr_init("Single file OpenXR", binding, d3d_make_surface_data, d3d_swapchain_fmt)) {
+		d3d_shutdown();
+		MessageBox(nullptr, "OpenXR initialization failed\n", "Error", 1);
+		return 1;
+	}
 	openxr_make_actions();
 	app_init();
 
@@ -194,7 +198,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 // OpenXR code                           //
 ///////////////////////////////////////////
 
-void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format) {
+bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format) {
 	const char          *extensions[] = { APP_GRAPHICS_EXTENSION_NAME };
 	XrInstanceCreateInfo createInfo   = { XR_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.enabledExtensionCount      = _countof(extensions);
@@ -203,6 +207,11 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 	strcpy_s(createInfo.applicationInfo.applicationName, 128, app_name);
 	xrCreateInstance(&createInfo, &xr_instance);
 
+	// Check if OpenXR is on this system, if this is null here, the user needs to install an
+	// OpenXR runtime and ensure it's active!
+	if (xr_instance == nullptr)
+		return false;
+
 	// Request a form factor from the device (HMD, Handheld, etc.)
 	XrSystemGetInfo systemInfo = { XR_TYPE_SYSTEM_GET_INFO };
 	systemInfo.formFactor = app_config_form;
@@ -210,7 +219,7 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 
 	// Check what blend mode is valid for this device (opaque vs transparent displays)
 	// We'll just take the first one available!
-	uint32_t                       blend_count;
+	uint32_t                       blend_count = 0;
 	vector<XrEnvironmentBlendMode> blend_modes;
 	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, 0, &blend_count, nullptr);
 	blend_modes.resize(blend_count);
@@ -229,6 +238,10 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 	sessionInfo.systemId = xr_system_id;
 	xrCreateSession(xr_instance, &sessionInfo, &xr_session);
 
+	// Unable to start a session, may not have an MR device attached or ready
+	if (xr_session == nullptr)
+		return false;
+
 	// OpenXR uses a couple different types of reference frames for positioning content, we need to choose one for
 	// displaying our content! STAGE would be relative to the center of your guardian system's bounds, and LOCAL
 	// would be relative to your device's starting location. HoloLens doesn't have a STAGE, so we'll use LOCAL.
@@ -239,7 +252,7 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 
 	// Now we need to find all the viewpoints we need to take care of! For a stereo headset, this should be 2.
 	// Similarly, for an AR phone, we'll need 1, and a VR cave could have 6, or even 12!
-	uint32_t view_count;
+	uint32_t view_count = 0;
 	xrEnumerateViewConfigurationViews(xr_instance, xr_system_id, app_config_view, 0, &view_count, nullptr);
 	xr_config_views.resize(view_count, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
 	xr_views       .resize(view_count, { XR_TYPE_VIEW });
@@ -261,7 +274,7 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 		xrCreateSwapchain(xr_session, &swapchain_info, &handle);
 
 		// Find out how many textures were generated for the swapchain
-		uint32_t surface_count;
+		uint32_t surface_count = 0;
 		xrEnumerateSwapchainImages(handle, 0, &surface_count, nullptr);
 
 		// We'll want to track our own information about the swapchain, so we can draw stuff onto it! We'll also create
@@ -278,6 +291,8 @@ void openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 		}
 		xr_swapchains.push_back(swapchain);
 	}
+
+	return true;
 }
 
 ///////////////////////////////////////////
@@ -483,7 +498,7 @@ void openxr_render_frame(render_delegate_t render_scene, predicted_delegate_t pr
 bool openxr_render_layer(render_delegate_t render_scene, XrTime predictedTime, vector<XrCompositionLayerProjectionView> &views, XrCompositionLayerProjection &layer) {
 	
 	// Find the state and location of each viewpoint at the predicted time
-	uint32_t         view_count;
+	uint32_t         view_count  = 0;
 	XrViewState      view_state  = { XR_TYPE_VIEW_STATE };
 	XrViewLocateInfo locate_info = { XR_TYPE_VIEW_LOCATE_INFO };
 	locate_info.displayTime = predictedTime;
