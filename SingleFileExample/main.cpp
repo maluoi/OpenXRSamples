@@ -88,25 +88,20 @@ vector<XrView>                  xr_views;
 vector<XrViewConfigurationView> xr_config_views;
 vector<swapchain_t>             xr_swapchains;
 
-typedef swapchain_surfdata_t(*make_surfacedata_delegate_t) (XrBaseInStructure &swapchain_img);
-typedef void                (*release_swapchain_delegate_t)(swapchain_t &swapchain);
-typedef void                (*render_delegate_t)           (XrCompositionLayerProjectionView &viewpoint, swapchain_surfdata_t &surface);
-typedef void                (*predicted_delegate_t)        ();
-
-bool openxr_init          (const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format);
+bool openxr_init          (const char *app_name, XrBaseInStructure *gfx_binding, int64_t swapchain_format);
 void openxr_make_actions  ();
-void openxr_shutdown      (release_swapchain_delegate_t release_swapchain);
+void openxr_shutdown      ();
 void openxr_poll_events   (bool &exit);
 void openxr_poll_actions  ();
 void openxr_poll_predicted(XrTime predicted_time);
-void openxr_render_frame  (render_delegate_t render_scene, predicted_delegate_t predicted_update);
-bool openxr_render_layer  (render_delegate_t render_scene, XrTime predictedTime, vector<XrCompositionLayerProjectionView> &projectionViews, XrCompositionLayerProjection &layer);
+void openxr_render_frame  ();
+bool openxr_render_layer  (XrTime predictedTime, vector<XrCompositionLayerProjectionView> &projectionViews, XrCompositionLayerProjection &layer);
 
 ///////////////////////////////////////////
 
 ID3D11Device             *d3d_device        = nullptr;
 ID3D11DeviceContext      *d3d_context       = nullptr;
-int64_t                   d3d_swapchain_fmt = -1;
+int64_t                   d3d_swapchain_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
 XrGraphicsBindingD3D11KHR d3d_binding       = {};
 
 XrBaseInStructure   *d3d_init             ();
@@ -168,7 +163,7 @@ uint16_t app_inds[] = {
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 	XrBaseInStructure *binding = d3d_init();
-	if (!openxr_init("Single file OpenXR", binding, d3d_make_surface_data, d3d_swapchain_fmt)) {
+	if (!openxr_init("Single file OpenXR", binding)) {
 		d3d_shutdown();
 		MessageBox(nullptr, "OpenXR initialization failed\n", "Error", 1);
 		return 1;
@@ -183,13 +178,13 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 		if (xr_session_state == XR_SESSION_STATE_VISIBLE || xr_session_state == XR_SESSION_STATE_FOCUSED || xr_session_state == XR_SESSION_STATE_RUNNING) {
 			openxr_poll_actions();
 			app_update();
-			openxr_render_frame(d3d_render_layer, app_update_predicted);
+			openxr_render_frame();
 		} else {
 			this_thread::sleep_for(chrono::milliseconds(250));
 		}
 	}
 
-	openxr_shutdown(d3d_swapchain_destroy);
+	openxr_shutdown();
 	d3d_shutdown();
 	return 0;
 }
@@ -198,7 +193,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 // OpenXR code                           //
 ///////////////////////////////////////////
 
-bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surfacedata_delegate_t make_surfacedata, int64_t swapchain_format) {
+bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t swapchain_format) {
 	const char          *extensions[] = { APP_GRAPHICS_EXTENSION_NAME };
 	XrInstanceCreateInfo createInfo   = { XR_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.enabledExtensionCount      = _countof(extensions);
@@ -287,7 +282,7 @@ bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, make_surf
 		swapchain.surface_data  .resize(surface_count);
 		xrEnumerateSwapchainImages(swapchain.handle, surface_count, nullptr, (XrSwapchainImageBaseHeader*)swapchain.surface_images.data());
 		for (uint32_t i = 0; i < surface_count; i++) {
-			swapchain.surface_data[i] = make_surfacedata((XrBaseInStructure&)swapchain.surface_images[i]);
+			swapchain.surface_data[i] = d3d_make_surface_data((XrBaseInStructure&)swapchain.surface_images[i]);
 		}
 		xr_swapchains.push_back(swapchain);
 	}
@@ -356,11 +351,11 @@ void openxr_make_actions() {
 
 ///////////////////////////////////////////
 
-void openxr_shutdown(release_swapchain_delegate_t release_swapchain) {
+void openxr_shutdown() {
 	// We used a graphics API to initialize the swapchain data, so we'll
 	// give it a chance to release anythig here!
 	for (int32_t i = 0; i < xr_swapchains.size(); i++) {
-		release_swapchain(xr_swapchains[i]);
+		d3d_swapchain_destroy(xr_swapchains[i]);
 	}
 	xr_swapchains.clear();
 }
@@ -458,7 +453,7 @@ void openxr_poll_predicted(XrTime predicted_time) {
 
 ///////////////////////////////////////////
 
-void openxr_render_frame(render_delegate_t render_scene, predicted_delegate_t predicted_update) {
+void openxr_render_frame() {
 	// Block until the previous frame is finished displaying, and is ready for another one.
 	// Also returns a prediction of when the next frame will be displayed, for use with predicting
 	// locations of controllers, viewpoints, etc.
@@ -472,15 +467,14 @@ void openxr_render_frame(render_delegate_t render_scene, predicted_delegate_t pr
 	// Execute any code that's dependant on the predicted time, such as updating the location of
 	// controller models.
 	openxr_poll_predicted(frame_state.predictedDisplayTime);
-	if (predicted_update != nullptr)
-		predicted_update();
+	app_predicted_update();
 
 	// If the session is active, lets render our layer in the compositor!
 	XrCompositionLayerBaseHeader            *layer      = nullptr;
 	XrCompositionLayerProjection             layer_proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	vector<XrCompositionLayerProjectionView> views;
 	bool session_active = xr_session_state == XR_SESSION_STATE_VISIBLE || xr_session_state == XR_SESSION_STATE_FOCUSED;
-	if (session_active && openxr_render_layer(render_scene, frame_state.predictedDisplayTime, views, layer_proj)) {
+	if (session_active && openxr_render_layer(frame_state.predictedDisplayTime, views, layer_proj)) {
 		layer = (XrCompositionLayerBaseHeader*)&layer_proj;
 	}
 
@@ -495,7 +489,7 @@ void openxr_render_frame(render_delegate_t render_scene, predicted_delegate_t pr
 
 ///////////////////////////////////////////
 
-bool openxr_render_layer(render_delegate_t render_scene, XrTime predictedTime, vector<XrCompositionLayerProjectionView> &views, XrCompositionLayerProjection &layer) {
+bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjectionView> &views, XrCompositionLayerProjection &layer) {
 	
 	// Find the state and location of each viewpoint at the predicted time
 	uint32_t         view_count  = 0;
@@ -530,7 +524,7 @@ bool openxr_render_layer(render_delegate_t render_scene, XrTime predictedTime, v
 		views[i].subImage.imageRect.extent = { xr_swapchains[i].width, xr_swapchains[i].height };
 
 		// Call the rendering callback with our view and swapchain info
-		render_scene(views[i], xr_swapchains[i].surface_data[img_id]);
+		d3d_render_layer(views[i], xr_swapchains[i].surface_data[img_id]);
 
 		// And tell OpenXR we're done with rendering to this one!
 		XrSwapchainImageReleaseInfo release_info = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
@@ -548,15 +542,9 @@ bool openxr_render_layer(render_delegate_t render_scene, XrTime predictedTime, v
 ///////////////////////////////////////////
 
 XrBaseInStructure *d3d_init() {
-	UINT creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-#ifdef _DEBUG
-	creation_flags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-	D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
-	if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, creation_flags, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
-		printf("\tFailed to init d3d!\n");
-
-	d3d_swapchain_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+	D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
+	if (FAILED(D3D11CreateDevice( nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, 0, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
+		printf("Failed to init d3d!\n");
 
 	// Create a binding for OpenXR to use during session creation
 	d3d_binding = { XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
