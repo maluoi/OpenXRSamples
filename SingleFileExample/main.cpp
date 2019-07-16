@@ -163,7 +163,7 @@ uint16_t app_inds[] = {
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 	XrBaseInStructure *binding = d3d_init();
-	if (!openxr_init("Single file OpenXR", binding)) {
+	if (!openxr_init("Single file OpenXR", binding, d3d_swapchain_fmt)) {
 		d3d_shutdown();
 		MessageBox(nullptr, "OpenXR initialization failed\n", "Error", 1);
 		return 1;
@@ -467,7 +467,7 @@ void openxr_render_frame() {
 	// Execute any code that's dependant on the predicted time, such as updating the location of
 	// controller models.
 	openxr_poll_predicted(frame_state.predictedDisplayTime);
-	app_predicted_update();
+	app_update_predicted();
 
 	// If the session is active, lets render our layer in the compositor!
 	XrCompositionLayerBaseHeader            *layer      = nullptr;
