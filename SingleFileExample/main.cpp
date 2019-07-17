@@ -6,11 +6,6 @@
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
 
-// Our hooks for specifying what API we're building for
-#define APP_SWAPCHAINTYPE XrSwapchainImageD3D11KHR
-#define APP_SWAPCHAIN_TYPE_ID XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR
-#define APP_GRAPHICS_EXTENSION_NAME XR_KHR_D3D11_ENABLE_EXTENSION_NAME
-
 #include <d3d11.h>
 #include <directxmath.h> // Matrix math functions and objects
 #include <d3dcompiler.h> // For compiling shaders! D3DCompile
@@ -34,8 +29,8 @@ struct swapchain_t {
 	XrSwapchain handle;
 	int32_t     width;
 	int32_t     height;
-	vector<APP_SWAPCHAINTYPE>    surface_images;
-	vector<swapchain_surfdata_t> surface_data;
+	vector<XrSwapchainImageD3D11KHR> surface_images;
+	vector<swapchain_surfdata_t>     surface_data;
 };
 
 struct input_state_t {
@@ -194,7 +189,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 ///////////////////////////////////////////
 
 bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t swapchain_format) {
-	const char          *extensions[] = { APP_GRAPHICS_EXTENSION_NAME };
+	const char          *extensions[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
 	XrInstanceCreateInfo createInfo   = { XR_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.enabledExtensionCount      = _countof(extensions);
 	createInfo.enabledExtensionNames      = extensions;
@@ -278,7 +273,7 @@ bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t s
 		swapchain.width  = swapchain_info.width;
 		swapchain.height = swapchain_info.height;
 		swapchain.handle = handle;
-		swapchain.surface_images.resize(surface_count, { APP_SWAPCHAIN_TYPE_ID } );
+		swapchain.surface_images.resize(surface_count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR } );
 		swapchain.surface_data  .resize(surface_count);
 		xrEnumerateSwapchainImages(swapchain.handle, surface_count, nullptr, (XrSwapchainImageBaseHeader*)swapchain.surface_images.data());
 		for (uint32_t i = 0; i < surface_count; i++) {
@@ -562,8 +557,6 @@ void d3d_shutdown() {
 ///////////////////////////////////////////
 
 swapchain_surfdata_t d3d_make_surface_data(XrBaseInStructure &swapchain_img) {
-	assert(swapchain_img.type == APP_SWAPCHAIN_TYPE_ID);
-
 	swapchain_surfdata_t result = {};
 
 	// Get information about the swapchain image that OpenXR made for us!
