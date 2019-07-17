@@ -83,7 +83,7 @@ vector<XrView>                  xr_views;
 vector<XrViewConfigurationView> xr_config_views;
 vector<swapchain_t>             xr_swapchains;
 
-bool openxr_init          (const char *app_name, XrBaseInStructure *gfx_binding, int64_t swapchain_format);
+bool openxr_init          (const char *app_name, int64_t swapchain_format);
 void openxr_make_actions  ();
 void openxr_shutdown      ();
 void openxr_poll_events   (bool &exit);
@@ -94,12 +94,11 @@ bool openxr_render_layer  (XrTime predictedTime, vector<XrCompositionLayerProjec
 
 ///////////////////////////////////////////
 
-ID3D11Device             *d3d_device        = nullptr;
-ID3D11DeviceContext      *d3d_context       = nullptr;
-int64_t                   d3d_swapchain_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
-XrGraphicsBindingD3D11KHR d3d_binding       = {};
+ID3D11Device        *d3d_device        = nullptr;
+ID3D11DeviceContext *d3d_context       = nullptr;
+int64_t              d3d_swapchain_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
 
-XrBaseInStructure   *d3d_init             ();
+void                 d3d_init             ();
 void                 d3d_shutdown         ();
 swapchain_surfdata_t d3d_make_surface_data(XrBaseInStructure &swapchainImage);
 void                 d3d_render_layer     (XrCompositionLayerProjectionView &layerView, swapchain_surfdata_t &surface);
@@ -157,8 +156,8 @@ uint16_t app_inds[] = {
 ///////////////////////////////////////////
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
-	XrBaseInStructure *binding = d3d_init();
-	if (!openxr_init("Single file OpenXR", binding, d3d_swapchain_fmt)) {
+	d3d_init();
+	if (!openxr_init("Single file OpenXR", d3d_swapchain_fmt)) {
 		d3d_shutdown();
 		MessageBox(nullptr, "OpenXR initialization failed\n", "Error", 1);
 		return 1;
@@ -188,7 +187,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 // OpenXR code                           //
 ///////////////////////////////////////////
 
-bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t swapchain_format) {
+bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	const char          *extensions[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
 	XrInstanceCreateInfo createInfo   = { XR_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.enabledExtensionCount      = _countof(extensions);
@@ -213,8 +212,10 @@ bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t s
 
 	// A session represents this application's desire to display things! This is where we hook up our graphics API.
 	// This does not start the session, for that, you'll need a call to xrBeginSession, which we do in openxr_poll_events
+	XrGraphicsBindingD3D11KHR binding = { XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
+	binding.device = d3d_device;
 	XrSessionCreateInfo sessionInfo = { XR_TYPE_SESSION_CREATE_INFO };
-	sessionInfo.next     = (const void*)gfx_binding;
+	sessionInfo.next     = &binding;
 	sessionInfo.systemId = xr_system_id;
 	xrCreateSession(xr_instance, &sessionInfo, &xr_session);
 
@@ -526,15 +527,10 @@ bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjecti
 // DirectX code                          //
 ///////////////////////////////////////////
 
-XrBaseInStructure *d3d_init() {
+void d3d_init() {
 	D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
 	if (FAILED(D3D11CreateDevice( nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, 0, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
 		printf("Failed to init d3d!\n");
-
-	// Create a binding for OpenXR to use during session creation
-	d3d_binding = { XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
-	d3d_binding.device = d3d_device;
-	return (XrBaseInStructure*)&d3d_binding;
 }
 
 ///////////////////////////////////////////
