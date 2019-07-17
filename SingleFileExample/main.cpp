@@ -209,17 +209,7 @@ bool openxr_init(const char *app_name, XrBaseInStructure *gfx_binding, int64_t s
 
 	// Check what blend mode is valid for this device (opaque vs transparent displays)
 	// We'll just take the first one available!
-	uint32_t                       blend_count = 0;
-	vector<XrEnvironmentBlendMode> blend_modes;
-	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, 0, &blend_count, nullptr);
-	blend_modes.resize(blend_count);
-	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, blend_count, &blend_count, blend_modes.data());
-	for (size_t i = 0; i < blend_count; i++) {
-		if (blend_modes[i] == XR_ENVIRONMENT_BLEND_MODE_ADDITIVE || blend_modes[i] == XR_ENVIRONMENT_BLEND_MODE_OPAQUE) {
-			xr_blend = blend_modes[i];
-			break;
-		}
-	}
+	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, 1, nullptr, &xr_blend);
 
 	// A session represents this application's desire to display things! This is where we hook up our graphics API.
 	// This does not start the session, for that, you'll need a call to xrBeginSession, which we do in openxr_poll_events
