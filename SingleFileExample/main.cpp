@@ -341,9 +341,21 @@ void openxr_shutdown() {
 	// We used a graphics API to initialize the swapchain data, so we'll
 	// give it a chance to release anythig here!
 	for (int32_t i = 0; i < xr_swapchains.size(); i++) {
+		xrDestroySwapchain(xr_swapchains[i].handle);
 		d3d_swapchain_destroy(xr_swapchains[i]);
 	}
 	xr_swapchains.clear();
+
+	// Release all the other OpenXR resources that we've created!
+	// What gets allocated, must get deallocated!
+	if (xr_input.actionSet != XR_NULL_HANDLE) {
+		if (xr_input.handSpace[0] != XR_NULL_HANDLE) xrDestroySpace(xr_input.handSpace[0]);
+		if (xr_input.handSpace[1] != XR_NULL_HANDLE) xrDestroySpace(xr_input.handSpace[1]);
+		xrDestroyActionSet(xr_input.actionSet);
+	}
+	if (xr_app_space != XR_NULL_HANDLE) xrDestroySpace   (xr_app_space);
+	if (xr_session   != XR_NULL_HANDLE) xrDestroySession (xr_session);
+	if (xr_instance  != XR_NULL_HANDLE) xrDestroyInstance(xr_instance);
 }
 
 ///////////////////////////////////////////
