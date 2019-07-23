@@ -241,6 +241,11 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	for (uint32_t i = 0; i < view_count; i++) {
 		// Create a swapchain for this viewpoint! A swapchain is a set of texture buffers used for displaying to screen,
 		// typically this is a backbuffer and a front buffer, one for rendering data to, and one for displaying on-screen.
+		// A note about swapchain image format here! OpenXR doesn't create a concrete image format for the texture, like 
+		// DXGI_FORMAT_R8G8B8A8_UNORM. Instead, it switches to the TYPELESS variant of the provided texture format, like 
+		// DXGI_FORMAT_R8G8B8A8_TYPELESS. When creating an ID3D11RenderTargetView for the swapchain texture, we must specify
+		// a concrete type like DXGI_FORMAT_R8G8B8A8_UNORM, as attempting to create a TYPELESS view will throw errors, so 
+		// we do need to store the format separately and remember it later.
 		XrViewConfigurationView &view           = xr_config_views[i];
 		XrSwapchainCreateInfo    swapchain_info = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
 		XrSwapchain              handle;
@@ -565,8 +570,9 @@ swapchain_surfdata_t d3d_make_surface_data(XrBaseInStructure &swapchain_img) {
 	// Create a view resource for the swapchain image target that we can use to set up rendering.
 	D3D11_RENDER_TARGET_VIEW_DESC target_desc = {};
 	target_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-	// NOTE: color_desc.Format comes back in a similar format, but not exactly the same! CreateRenderTargetView fails if
-	// you pass it in directly
+	// NOTE: Why not use color_desc.Format? Check the notes over near the xrCreateSwapchain call!
+	// Basically, the color_desc.Format of the OpenXR created swapchain is TYPELESS, but in order to
+	// create a View for the texture, we need a concrete variant of the texture format like UNORM.
 	target_desc.Format        = (DXGI_FORMAT)d3d_swapchain_fmt; 
 	d3d_device->CreateRenderTargetView(d3d_swapchain_img.texture, &target_desc, &result.target_view);
 
