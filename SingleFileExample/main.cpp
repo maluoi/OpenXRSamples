@@ -1,7 +1,6 @@
-#pragma comment(lib,"Shlwapi.lib") // used by OpenXR
-#pragma comment(lib,"openxr_loader-1_0.lib")
 #pragma comment(lib,"D3D11.lib")
 #pragma comment(lib,"D3dcompiler.lib") // for shader compile
+#pragma comment(lib,"Dxgi.lib") // for CreateDXGIFactory1
 
 // Tell OpenXR what platform code we'll be using
 #define XR_USE_PLATFORM_WIN32
@@ -44,6 +43,10 @@ struct input_state_t {
 	XrBool32 renderHand[2];
 	XrBool32 handSelect[2];
 };
+
+///////////////////////////////////////////
+
+PFN_xrGetD3D11GraphicsRequirementsKHR ext_xrGetD3D11GraphicsRequirementsKHR;
 
 ///////////////////////////////////////////
 
@@ -100,8 +103,9 @@ ID3D11Device        *d3d_device        = nullptr;
 ID3D11DeviceContext *d3d_context       = nullptr;
 int64_t              d3d_swapchain_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
 
-void                 d3d_init             ();
+bool                 d3d_init             (LUID &adapter_luid);
 void                 d3d_shutdown         ();
+IDXGIAdapter1       *d3d_get_adapter      (LUID &adapter_luid);
 swapchain_surfdata_t d3d_make_surface_data(XrBaseInStructure &swapchainImage);
 void                 d3d_render_layer     (XrCompositionLayerProjectionView &layerView, swapchain_surfdata_t &surface);
 void                 d3d_swapchain_destroy(swapchain_t &swapchain);
@@ -158,7 +162,6 @@ uint16_t app_inds[] = {
 ///////////////////////////////////////////
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
-	d3d_init();
 	if (!openxr_init("Single file OpenXR", d3d_swapchain_fmt)) {
 		d3d_shutdown();
 		MessageBox(nullptr, "OpenXR initialization failed\n", "Error", 1);
@@ -206,6 +209,15 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	if (xr_instance == nullptr)
 		return false;
 
+	// Load extension methods that we'll need for this application! There's a
+	// couple ways to do this, and this is a fairly manual one. Chek out this
+	// file for another way to do it:
+	// https://github.com/maluoi/StereoKit/blob/master/StereoKitC/systems/platform/openxr_extensions.h
+	xrGetInstanceProcAddr(
+		xr_instance,
+		"xrGetD3D11GraphicsRequirementsKHR",
+		(PFN_xrVoidFunction *)(&ext_xrGetD3D11GraphicsRequirementsKHR));
+
 	// Request a form factor from the device (HMD, Handheld, etc.)
 	XrSystemGetInfo systemInfo = { XR_TYPE_SYSTEM_GET_INFO };
 	systemInfo.formFactor = app_config_form;
@@ -215,6 +227,12 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	// We'll just take the first one available!
 	uint32_t blend_count = 0;
 	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, app_config_view, 1, &blend_count, &xr_blend);
+
+	// OpenXR wants to ensure apps are using the correct LUID, so this MUST be called before xrCreateSession
+	XrGraphicsRequirementsD3D11KHR requirement = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+	ext_xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system_id, &requirement);
+	if (!d3d_init(requirement.adapterLuid))
+		return false;
 
 	// A session represents this application's desire to display things! This is where we hook up our graphics API.
 	// This does not start the session, for that, you'll need a call to xrBeginSession, which we do in openxr_poll_events
@@ -381,11 +399,7 @@ void openxr_shutdown() {
 void openxr_poll_events(bool &exit) {
 	exit = false;
 
-	// This object is pretty large, making it static so we only need to create it once
-	static XrEventDataBuffer event_buffer;
-	// Only the data header needs cleared out each time
-	event_buffer.type = XR_TYPE_EVENT_DATA_BUFFER;
-	event_buffer.next = nullptr;
+	XrEventDataBuffer event_buffer = { XR_TYPE_EVENT_DATA_BUFFER };
 
 	while (xrPollEvent(xr_instance, &event_buffer) == XR_SUCCESS) {
 		switch (event_buffer.type) {
@@ -411,6 +425,7 @@ void openxr_poll_events(bool &exit) {
 		} break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: exit = true; return;
 		}
+		event_buffer = { XR_TYPE_EVENT_DATA_BUFFER };
 	}
 }
 
@@ -572,10 +587,41 @@ bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjecti
 // DirectX code                          //
 ///////////////////////////////////////////
 
-void d3d_init() {
+bool d3d_init(LUID &adapter_luid) {
+	IDXGIAdapter1    *adapter         = d3d_get_adapter(adapter_luid);
 	D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
-	if (FAILED(D3D11CreateDevice( nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, 0, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
-		printf("Failed to init d3d!\n");
+
+	if (adapter == nullptr)
+		return false;
+	if (FAILED(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, 0, 0, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
+		return false;
+	return true;
+}
+
+///////////////////////////////////////////
+
+IDXGIAdapter1 *d3d_get_adapter(LUID &adapter_luid) {
+	// Turn the luid into an actual adapter
+	IDXGIAdapter1 *final_adapter = nullptr;
+	IDXGIAdapter1 *curr_adapter  = nullptr;
+	IDXGIFactory1 *dxgi_factory;
+	DXGI_ADAPTER_DESC1 adapter_desc;
+
+	CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void **)(&dxgi_factory));
+
+	int curr = 0;
+	while (dxgi_factory->EnumAdapters1(curr++, &curr_adapter) == S_OK) {
+		curr_adapter->GetDesc1(&adapter_desc);
+
+		if (memcmp(&adapter_desc.AdapterLuid, &adapter_luid, sizeof(&adapter_luid)) == 0) {
+			final_adapter = curr_adapter;
+			break;
+		}
+		curr_adapter->Release();
+		curr_adapter = nullptr;
+	}
+	dxgi_factory->Release();
+	return final_adapter;
 }
 
 ///////////////////////////////////////////
