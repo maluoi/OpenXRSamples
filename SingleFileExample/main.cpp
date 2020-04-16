@@ -228,7 +228,9 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	uint32_t blend_count = 0;
 	xrEnumerateEnvironmentBlendModes(xr_instance, xr_system_id, app_config_view, 1, &blend_count, &xr_blend);
 
-	// OpenXR wants to ensure apps are using the correct LUID, so this MUST be called before xrCreateSession
+	// OpenXR wants to ensure apps are using the correct graphics card, so this MUST be called 
+	// before xrCreateSession. This is crucial on devices that have multiple graphics cards, 
+	// like laptops with integrated graphics chips in addition to dedicated graphics cards.
 	XrGraphicsRequirementsD3D11KHR requirement = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
 	ext_xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system_id, &requirement);
 	if (!d3d_init(requirement.adapterLuid))
@@ -595,13 +597,15 @@ bool d3d_init(LUID &adapter_luid) {
 		return false;
 	if (FAILED(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, 0, 0, featureLevels, _countof(featureLevels), D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context)))
 		return false;
+
+	adapter->Release();
 	return true;
 }
 
 ///////////////////////////////////////////
 
 IDXGIAdapter1 *d3d_get_adapter(LUID &adapter_luid) {
-	// Turn the luid into an actual adapter
+	// Turn the LUID into a specific graphics device adapter
 	IDXGIAdapter1 *final_adapter = nullptr;
 	IDXGIAdapter1 *curr_adapter  = nullptr;
 	IDXGIFactory1 *dxgi_factory;
