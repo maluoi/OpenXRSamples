@@ -704,26 +704,12 @@ void d3d_swapchain_destroy(swapchain_t &swapchain) {
 ///////////////////////////////////////////
 
 XMMATRIX d3d_xr_projection(XrFovf fov, float clip_near, float clip_far) {
-	// Mix of XMMatrixPerspectiveFovRH from DirectXMath and XrMatrix4x4f_CreateProjectionFov from xr_linear.h
-	const float tanLeft        = tanf(fov.angleLeft);
-	const float tanRight       = tanf(fov.angleRight);
-	const float tanDown        = tanf(fov.angleDown);
-	const float tanUp          = tanf(fov.angleUp);
-	const float tanAngleWidth  = tanRight - tanLeft;
-	const float tanAngleHeight = tanUp - tanDown;
-	const float range          = clip_far / (clip_near - clip_far);
+	const float left  = clip_near * tanf(fov.angleLeft);
+	const float right = clip_near * tanf(fov.angleRight);
+	const float down  = clip_near * tanf(fov.angleDown);
+	const float up    = clip_near * tanf(fov.angleUp);
 
-	// [row][column]
-	float result[16] = { 0 };
-	result[0]  = 2 / tanAngleWidth;                    // [0][0] Different, DX uses: Width (Height / AspectRatio);
-	result[5]  = 2 / tanAngleHeight;                   // [1][1] Same as DX's: Height (CosFov / SinFov)
-	result[8]  = (tanRight + tanLeft) / tanAngleWidth; // [2][0] Only present in xr's
-	result[9]  = (tanUp + tanDown) / tanAngleHeight;   // [2][1] Only present in xr's
-	result[10] = range;                               // [2][2] Same as xr's: -(farZ + offsetZ) / (farZ - nearZ)
-	result[11] = -1;                                  // [2][3] Same
-	result[14] = range * clip_near;                   // [3][2] Same as xr's: -(farZ * (nearZ + offsetZ)) / (farZ - nearZ);
-
-	return XMLoadFloat4x4((XMFLOAT4X4*)&result);
+	return XMMatrixPerspectiveOffCenterRH(left, right, down, up, clip_near, clip_far);
 }
 
 ///////////////////////////////////////////
