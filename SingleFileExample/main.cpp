@@ -14,6 +14,7 @@
 
 #include <thread> // sleep_for
 #include <vector>
+#include <algorithm> // any_of
 
 using namespace std;
 using namespace DirectX; // Matrix math
@@ -200,23 +201,62 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 ///////////////////////////////////////////
 
 bool openxr_init(const char *app_name, int64_t swapchain_format) {
-	const char *extensions[] = { 
-		XR_KHR_D3D11_ENABLE_EXTENSION_NAME, // Ask for the Direct3D11 extension for the rendering API
-		XR_EXT_DEBUG_UTILS_EXTENSION_NAME,  // And ask for the debug utils extension!
+	// OpenXR will fail to initialize if we ask for an extension that OpenXR
+	// can't provide! So we need to check our all extensions before 
+	// initializing OpenXR with them. Note that even if the extension is 
+	// present, it's still possible you may not be able to use it. For 
+	// example: the hand tracking extension may be present, but the hand
+	// sensor might not be plugged in or turned on. There are often 
+	// additional checks that should be made before using certain features!
+	vector<const char*> use_extensions;
+	const char         *ask_extensions[] = { 
+		XR_KHR_D3D11_ENABLE_EXTENSION_NAME, // Use Direct3D11 for rendering
+		XR_EXT_DEBUG_UTILS_EXTENSION_NAME,  // Debug utils for extra info
 	};
-	XrInstanceCreateInfo createInfo = { XR_TYPE_INSTANCE_CREATE_INFO };
-	createInfo.enabledExtensionCount      = _countof(extensions);
-	createInfo.enabledExtensionNames      = extensions;
-	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-	strcpy_s(createInfo.applicationInfo.applicationName, 128, app_name);
-	xrCreateInstance(&createInfo, &xr_instance);
 
-	// Check if OpenXR is on this system, if this is null here, the user needs to install an
-	// OpenXR runtime and ensure it's active!
-	if (xr_instance == nullptr)
+	// We'll get a list of extensions that OpenXR provides using this 
+	// enumerate pattern. OpenXR often uses a two-call enumeration pattern 
+	// where the first call will tell you how much memory to allocate, and
+	// the second call will provide you with the actual data!
+	uint32_t ext_count = 0;
+	xrEnumerateInstanceExtensionProperties(nullptr, 0, &ext_count, nullptr);
+	vector<XrExtensionProperties> xr_exts(ext_count, { XR_TYPE_EXTENSION_PROPERTIES });
+	xrEnumerateInstanceExtensionProperties(nullptr, ext_count, &ext_count, xr_exts.data());
+
+	printf("OpenXR extensions available:\n");
+	for (size_t i = 0; i < xr_exts.size(); i++) {
+		printf("- %s\n", xr_exts[i].extensionName);
+
+		// Check if we're asking for this extensions, and add it to our use 
+		// list!
+		for (int32_t ask = 0; ask < _countof(ask_extensions); ask++) {
+			if (strcmp(ask_extensions[ask], xr_exts[i].extensionName) == 0) {
+				use_extensions.push_back(ask_extensions[ask]);
+				break;
+			}
+		}
+	}
+	// If a required extension isn't present, you want to ditch out here!
+	// It's possible something like your rendering API might not be provided
+	// by the active runtime. APIs like OpenGL don't have universal support.
+	if (!std::any_of( use_extensions.begin(), use_extensions.end(), 
+		[] (const char *ext) {
+			return strcmp(ext, XR_KHR_D3D11_ENABLE_EXTENSION_NAME)==0;
+		}))
 		return false;
 
-	// https://www.khronos.org/registry/OpenXR/specs/1.0/html/xrspec.html#debug-message-categorization
+	// Initialize OpenXR with the extensions we've found!
+	XrInstanceCreateInfo createInfo = { XR_TYPE_INSTANCE_CREATE_INFO };
+	createInfo.enabledExtensionCount      = use_extensions.size();
+	createInfo.enabledExtensionNames      = use_extensions.data();
+	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+	strcpy_s(createInfo.applicationInfo.applicationName, app_name);
+	xrCreateInstance(&createInfo, &xr_instance);
+
+	// Check if OpenXR is on this system, if this is null here, the user 
+	// needs to install an OpenXR runtime and ensure it's active!
+	if (xr_instance == nullptr)
+		return false;
 
 	// Load extension methods that we'll need for this application! There's a
 	// couple ways to do this, and this is a fairly manual one. Chek out this
@@ -229,6 +269,8 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	// Set up a really verbose debug log! Great for dev, but turn this off or
 	// down for final builds. WMR doesn't produce much output here, but it
 	// may be more useful for other runtimes?
+	// Here's some extra information about the message types and severities:
+	// https://www.khronos.org/registry/OpenXR/specs/1.0/html/xrspec.html#debug-message-categorization
 	XrDebugUtilsMessengerCreateInfoEXT debug_info = { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
 	debug_info.messageTypes =
 		XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT     |
@@ -255,7 +297,8 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 		return (XrBool32)XR_FALSE;
 	};
 	// Start up the debug utils!
-	ext_xrCreateDebugUtilsMessengerEXT(xr_instance, &debug_info, &xr_debug);
+	if (ext_xrCreateDebugUtilsMessengerEXT)
+		ext_xrCreateDebugUtilsMessengerEXT(xr_instance, &debug_info, &xr_debug);
 	
 	// Request a form factor from the device (HMD, Handheld, etc.)
 	XrSystemGetInfo systemInfo = { XR_TYPE_SYSTEM_GET_INFO };
