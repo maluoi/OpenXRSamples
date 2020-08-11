@@ -46,7 +46,10 @@ struct input_state_t {
 
 ///////////////////////////////////////////
 
-PFN_xrGetD3D11GraphicsRequirementsKHR ext_xrGetD3D11GraphicsRequirementsKHR;
+// Function pointers for some OpenXR extension methods we'll use.
+PFN_xrGetD3D11GraphicsRequirementsKHR ext_xrGetD3D11GraphicsRequirementsKHR = nullptr;
+PFN_xrCreateDebugUtilsMessengerEXT    ext_xrCreateDebugUtilsMessengerEXT    = nullptr;
+PFN_xrDestroyDebugUtilsMessengerEXT   ext_xrDestroyDebugUtilsMessengerEXT   = nullptr;
 
 ///////////////////////////////////////////
 
@@ -82,7 +85,8 @@ bool           xr_running       = false;
 XrSpace        xr_app_space     = {};
 XrSystemId     xr_system_id     = XR_NULL_SYSTEM_ID;
 input_state_t  xr_input         = { };
-XrEnvironmentBlendMode xr_blend;
+XrEnvironmentBlendMode   xr_blend = {};
+XrDebugUtilsMessengerEXT xr_debug = {};
 
 vector<XrView>                  xr_views;
 vector<XrViewConfigurationView> xr_config_views;
@@ -196,8 +200,11 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 ///////////////////////////////////////////
 
 bool openxr_init(const char *app_name, int64_t swapchain_format) {
-	const char          *extensions[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
-	XrInstanceCreateInfo createInfo   = { XR_TYPE_INSTANCE_CREATE_INFO };
+	const char *extensions[] = { 
+		XR_KHR_D3D11_ENABLE_EXTENSION_NAME, // Ask for the Direct3D11 extension for the rendering API
+		XR_EXT_DEBUG_UTILS_EXTENSION_NAME,  // And ask for the debug utils extension!
+	};
+	XrInstanceCreateInfo createInfo = { XR_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.enabledExtensionCount      = _countof(extensions);
 	createInfo.enabledExtensionNames      = extensions;
 	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
@@ -209,15 +216,47 @@ bool openxr_init(const char *app_name, int64_t swapchain_format) {
 	if (xr_instance == nullptr)
 		return false;
 
+	// https://www.khronos.org/registry/OpenXR/specs/1.0/html/xrspec.html#debug-message-categorization
+
 	// Load extension methods that we'll need for this application! There's a
 	// couple ways to do this, and this is a fairly manual one. Chek out this
 	// file for another way to do it:
 	// https://github.com/maluoi/StereoKit/blob/master/StereoKitC/systems/platform/openxr_extensions.h
-	xrGetInstanceProcAddr(
-		xr_instance,
-		"xrGetD3D11GraphicsRequirementsKHR",
-		(PFN_xrVoidFunction *)(&ext_xrGetD3D11GraphicsRequirementsKHR));
+	xrGetInstanceProcAddr(xr_instance, "xrCreateDebugUtilsMessengerEXT",    (PFN_xrVoidFunction *)(&ext_xrCreateDebugUtilsMessengerEXT   ));
+	xrGetInstanceProcAddr(xr_instance, "xrDestroyDebugUtilsMessengerEXT",   (PFN_xrVoidFunction *)(&ext_xrDestroyDebugUtilsMessengerEXT  ));
+	xrGetInstanceProcAddr(xr_instance, "xrGetD3D11GraphicsRequirementsKHR", (PFN_xrVoidFunction *)(&ext_xrGetD3D11GraphicsRequirementsKHR));
 
+	// Set up a really verbose debug log! Great for dev, but turn this off or
+	// down for final builds. WMR doesn't produce much output here, but it
+	// may be more useful for other runtimes?
+	XrDebugUtilsMessengerCreateInfoEXT debug_info = { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+	debug_info.messageTypes =
+		XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT     |
+		XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT  |
+		XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+		XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT;
+	debug_info.messageSeverities =
+		XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+		XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT    |
+		XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+		XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+	debug_info.userCallback = [](XrDebugUtilsMessageSeverityFlagsEXT severity, XrDebugUtilsMessageTypeFlagsEXT types, const XrDebugUtilsMessengerCallbackDataEXT *msg, void* user_data) {
+		// Print the debug message we got! There's a bunch more info we could
+		// add here too, but this is a pretty good start, and you can always
+		// add a breakpoint this line!
+		printf("%s: %s\n", msg->functionName, msg->message);
+
+		// Output to debug window
+		char text[512];
+		sprintf_s(text, "%s: %s", msg->functionName, msg->message);
+		OutputDebugStringA(text);
+
+		// Returning XR_TRUE here will force the calling function to fail
+		return (XrBool32)XR_FALSE;
+	};
+	// Start up the debug utils!
+	ext_xrCreateDebugUtilsMessengerEXT(xr_instance, &debug_info, &xr_debug);
+	
 	// Request a form factor from the device (HMD, Handheld, etc.)
 	XrSystemGetInfo systemInfo = { XR_TYPE_SYSTEM_GET_INFO };
 	systemInfo.formFactor = app_config_form;
@@ -393,6 +432,7 @@ void openxr_shutdown() {
 	}
 	if (xr_app_space != XR_NULL_HANDLE) xrDestroySpace   (xr_app_space);
 	if (xr_session   != XR_NULL_HANDLE) xrDestroySession (xr_session);
+	if (xr_debug     != XR_NULL_HANDLE) ext_xrDestroyDebugUtilsMessengerEXT(xr_debug);
 	if (xr_instance  != XR_NULL_HANDLE) xrDestroyInstance(xr_instance);
 }
 
